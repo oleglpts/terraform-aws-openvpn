@@ -4,6 +4,32 @@ write_files:
     content: |
       net.ipv4.ip_forward=1
       net.ipv6.conf.all.forwarding=1
+  - path: /etc/openvpn/client/client.ovpn
+    content: |
+      dev tun
+      proto tcp-client
+      remote <your_server_ip>
+      port 1194
+      cipher AES-256-CBC
+      tls-cipher "DEFAULT:@SECLEVEL=0"
+      client
+      tls-client
+      comp-lzo
+      auth-nocache
+      ns-cert-type server
+      ca ca.crt
+      cert client.crt
+      key client.key
+      verb 4
+      route-delay 5
+      script-security 3
+      ping 10
+      ping-restart 120
+      ping-timer-rem
+      persist-key
+      persist-tun
+      pull
+
   - path: /etc/openvpn/server_tap.conf
     content: |
       dev tap0
