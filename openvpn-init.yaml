@@ -1,0 +1,229 @@
+#cloud-config
+write_files:
+  - path: /etc/sysctl.conf
+    content: |
+      net.ipv4.ip_forward=1
+      net.ipv6.conf.all.forwarding=1
+  - path: /etc/openvpn/server_tap.conf
+    content: |
+      dev tap0
+      proto tcp-server
+      mode server
+      comp-lzo
+      keepalive 10 120
+      log-append /var/log/openvpn/openvpntap.log
+      daemon
+      cipher AES-256-CBC
+      ifconfig-pool 192.168.32.2 192.168.32.200
+      ifconfig 192.168.32.1 255.255.255.0
+      ifconfig-pool-persist ipptap.txt
+      status /var/log/openvpn/openvpntap-status.log
+      tls-server
+      tls-auth server/ta.key 0
+      # Not recommended
+      tls-cipher "DEFAULT:@SECLEVEL=0"
+      dh server/dh.pem
+      ca server/ca.crt
+      cert server/server.crt
+      key server/server.key
+      push "route-gateway 192.168.32.1"
+      push "redirect-gateway def1"
+      push "dhcp-option DNS 8.8.8.8"
+      duplicate-cn
+      port 1195
+      user nobody
+      group nogroup
+      persist-tun
+      persist-key
+      verb 3
+  - path: /etc/openvpn/server_tun.conf
+    content: |
+      dev tun0
+      proto tcp-server
+      comp-lzo
+      keepalive 10 120
+      log-append /var/log/openvpn/openvpntun.log
+      daemon
+      cipher AES-256-CBC
+      server 192.168.22.0 255.255.255.0
+      ifconfig-pool-persist ipptun.txt
+      status /var/log/openvpn/openvpntun-status.log
+      dh server/dh.pem
+      ca server/ca.crt
+      # Not recommended
+      tls-cipher "DEFAULT:@SECLEVEL=0"
+      # tls-auth keys/ta_2020.key 0
+      cert server/server.crt
+      key server/server.key
+      push "route-gateway 192.168.22.2"
+      push "redirect-gateway def1 bypass-dhcp"
+      push "dhcp-option DNS 8.8.8.8"
+      duplicate-cn
+      port 1194
+      user nobody
+      group nogroup
+      persist-tun
+      persist-key
+      verb 3
+  - path: /etc/default/ufw
+    content: |
+      # /etc/default/ufw
+      #
+
+      # Set to yes to apply rules to support IPv6 (no means only IPv6 on loopback
+      # accepted). You will need to 'disable' and then 'enable' the firewall for
+      # the changes to take affect.
+      IPV6=yes
+
+      # Set the default input policy to ACCEPT, DROP, or REJECT. Please note that if
+      # you change this you will most likely want to adjust your rules.
+      DEFAULT_INPUT_POLICY="DROP"
+
+      # Set the default output policy to ACCEPT, DROP, or REJECT. Please note that if
+      # you change this you will most likely want to adjust your rules.
+      DEFAULT_OUTPUT_POLICY="ACCEPT"
+
+      # Set the default forward policy to ACCEPT, DROP or REJECT.  Please note that
+      # if you change this you will most likely want to adjust your rules
+      DEFAULT_FORWARD_POLICY="ACCEPT"
+
+      # Set the default application policy to ACCEPT, DROP, REJECT or SKIP. Please
+      # note that setting this to ACCEPT may be a security risk. See 'man ufw' for
+      # details
+      DEFAULT_APPLICATION_POLICY="SKIP"
+
+      # By default, ufw only touches its own chains. Set this to 'yes' to have ufw
+      # manage the built-in chains too. Warning: setting this to 'yes' will break
+      # non-ufw managed firewall rules
+      MANAGE_BUILTINS=no
+
+      #
+      # IPT backend
+      #
+      # only enable if using iptables backend
+      IPT_SYSCTL=/etc/ufw/sysctl.conf
+
+      # Extra connection tracking modules to load. IPT_MODULES should typically be
+      # empty for new installations and modules added only as needed. See
+      # 'CONNECTION HELPERS' from 'man ufw-framework' for details. Complete list can
+      # be found in net/netfilter/Kconfig of your kernel source. Some common modules:
+      # nf_conntrack_irc, nf_nat_irc: DCC (Direct Client to Client) support
+      # nf_conntrack_netbios_ns: NetBIOS (samba) client support
+      # nf_conntrack_pptp, nf_nat_pptp: PPTP over stateful firewall/NAT
+      # nf_conntrack_ftp, nf_nat_ftp: active FTP support
+      # nf_conntrack_tftp, nf_nat_tftp: TFTP support (server side)
+      # nf_conntrack_sane: sane support
+      IPT_MODULES=""
+  - path: /etc/ufw/before.rules
+    content: |
+        #
+        # rules.before
+        #
+        # Rules that should be run before the ufw command line added rules. Custom
+        # rules should be added to one of these chains:
+        #   ufw-before-input
+        #   ufw-before-output
+        #   ufw-before-forward
+        #
+        # NAT table rules
+        *nat
+        :POSTROUTING ACCEPT [0:0]
+        # Allow traffic from OpenVPN client to eth0 (change to the interface you discovered!)
+        -A POSTROUTING -s 192.168.22.0/24 -o eth0 -j MASQUERADE
+        -A POSTROUTING -s 192.168.32.0/24 -o eth0 -j MASQUERADE
+        COMMIT
+        # END OPENVPN RULES
+
+        # Don't delete these required lines, otherwise there will be errors
+        *filter
+        :ufw-before-input - [0:0]
+        :ufw-before-output - [0:0]
+        :ufw-before-forward - [0:0]
+        :ufw-not-local - [0:0]
+        # End required lines
+
+        # allow all on loopback
+        -A ufw-before-input -i lo -j ACCEPT
+        -A ufw-before-output -o lo -j ACCEPT
+
+        # quickly process packets for which we already have a connection
+        -A ufw-before-input -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+        -A ufw-before-output -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+        -A ufw-before-forward -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+        # drop INVALID packets (logs these in loglevel medium and higher)
+        -A ufw-before-input -m conntrack --ctstate INVALID -j ufw-logging-deny
+        -A ufw-before-input -m conntrack --ctstate INVALID -j DROP
+
+        # ok icmp codes for INPUT
+        -A ufw-before-input -p icmp --icmp-type destination-unreachable -j ACCEPT
+        -A ufw-before-input -p icmp --icmp-type time-exceeded -j ACCEPT
+        -A ufw-before-input -p icmp --icmp-type parameter-problem -j ACCEPT
+        -A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT
+
+        # ok icmp code for FORWARD
+        -A ufw-before-forward -p icmp --icmp-type destination-unreachable -j ACCEPT
+        -A ufw-before-forward -p icmp --icmp-type time-exceeded -j ACCEPT
+        -A ufw-before-forward -p icmp --icmp-type parameter-problem -j ACCEPT
+        -A ufw-before-forward -p icmp --icmp-type echo-request -j ACCEPT
+
+        # allow dhcp client to work
+        -A ufw-before-input -p udp --sport 67 --dport 68 -j ACCEPT
+
+        #
+        # ufw-not-local
+        #
+        -A ufw-before-input -j ufw-not-local
+
+        # if LOCAL, RETURN
+        -A ufw-not-local -m addrtype --dst-type LOCAL -j RETURN
+
+        # if MULTICAST, RETURN
+        -A ufw-not-local -m addrtype --dst-type MULTICAST -j RETURN
+
+        # if BROADCAST, RETURN
+        -A ufw-not-local -m addrtype --dst-type BROADCAST -j RETURN
+
+        # all other non-local packets are dropped
+        -A ufw-not-local -m limit --limit 3/min --limit-burst 10 -j ufw-logging-deny
+        -A ufw-not-local -j DROP
+
+        # allow MULTICAST mDNS for service discovery (be sure the MULTICAST line above
+        # is uncommented)
+        -A ufw-before-input -p udp -d 224.0.0.251 --dport 5353 -j ACCEPT
+
+        # allow MULTICAST UPnP for service discovery (be sure the MULTICAST line above
+        # is uncommented)
+        -A ufw-before-input -p udp -d 239.255.255.250 --dport 1900 -j ACCEPT
+
+        # don't delete the 'COMMIT' line or these rules won't be processed
+        COMMIT
+runcmd:
+  - echo 1 > /proc/sys/net/ipv4/ip_forward
+  - echo 1 > /proc/sys/net/ipv6/conf/all/forwarding
+  - apt-get update && apt-get install -y mc openvpn easy-rsa
+  - cd /usr/share/easy-rsa
+  - ./easyrsa init-pki
+  - echo "arenaplus.net" | ./easyrsa build-ca nopass
+  - ./easyrsa gen-dh
+  - openvpn --genkey --secret /etc/openvpn/server/ta.key
+  - ./easyrsa build-server-full server nopass
+  - ./easyrsa build-client-full client nopass
+  - cp pki/ca.crt /etc/openvpn/server
+  - cp pki/dh.pem /etc/openvpn/server
+  - cp pki/issued/server.crt /etc/openvpn/server
+  - cp pki/private/server.key /etc/openvpn/server
+  - cp pki/ca.crt /etc/openvpn/client
+  - cp /etc/openvpn/server/ta.key /etc/openvpn/client
+  - cp pki/issued/client.crt /etc/openvpn/client
+  - cp pki/private/client.key /etc/openvpn/client
+  - ufw allow 1194
+  - ufw allow 1195
+  - ufw allow ssh
+  - ufw allow OpenSSH
+  - ufw allow 53
+  - ufw disable
+  - ufw enable
+  - service openvpn start
+  - systemctl daemon-reload
+  - service openvpn restart
